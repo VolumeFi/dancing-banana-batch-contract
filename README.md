@@ -21,3 +21,6 @@ brownie test -s --network mainnet-fork
 ```bash
 brownie run scripts/deploy.py --network mainnet
 ```
+
+## Current Exchange Contract deployed at:
+1. Release 1: [0x762Ee4b5525E852a3E350AC993C08633c7B648e3](https://etherscan.io/address/0x762Ee4b5525E852a3E350AC993C08633c7B648e3)
