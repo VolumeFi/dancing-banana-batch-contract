@@ -19,5 +19,5 @@ brownie test -s --network mainnet-fork
 ### Deployment
 
 ```bash
-brownie run scripts/deploy.py
+brownie run scripts/deploy.py --network mainnet
 ```
