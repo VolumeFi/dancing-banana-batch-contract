@@ -37,17 +37,17 @@ interface WrappedEth:
 interface NonfungiblePositionManager:
     def burn(tokenId: uint256): payable
 
-interface ERC721:
-    def transferFrom(_from: address, _to: address, _tokenId: uint256): payable
+interface ERC20:
+    def approve(account: address, amount: uint256): nonpayable
+    def transfer(account: address, amount: uint256): nonpayable
+    def transferFrom(_from: address, _to: address, amount: uint256): nonpayable
 
 interface UniswapV2Factory:
     def getPair(tokenA: address, tokenB: address) -> address: view
 
 interface UniswapV2Pair:
     def token0() -> address: view
-    def token1() -> address: view
     def getReserves() -> (uint256, uint256, uint256): view
-    def mint(to: address) -> uint256: nonpayable
 
 event AddedLiquidity:
     tokenId: indexed(uint256)
@@ -78,9 +78,6 @@ UNISWAPV2ROUTER02: constant(address) = 0x7a250d5630B4cF539739dF2C5dAcb4c659F2488
 VETH: constant(address) = 0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE
 WETH: constant(address) = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2
 
-APPROVE_MID: constant(Bytes[4]) = method_id("approve(address,uint256)")
-TRANSFER_MID: constant(Bytes[4]) = method_id("transfer(address,uint256)")
-TRANSFERFROM_MID: constant(Bytes[4]) = method_id("transferFrom(address,address,uint256)")
 CAIPIN_MID: constant(Bytes[4]) = method_id("createAndInitializePoolIfNecessary(address,address,uint24,uint160)")
 GETPOOL_MID: constant(Bytes[4]) = method_id("getPool(address,address,uint24)")
 SLOT0_MID: constant(Bytes[4]) = method_id("slot0()")
@@ -92,11 +89,17 @@ COLLECT_MID: constant(Bytes[4]) = method_id("collect((uint256,address,uint128,ui
 SWAPETFT_MID: constant(Bytes[4]) = method_id("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)")
 
 ADDLIQETH_MID: constant(Bytes[4]) = method_id("addLiquidityEthForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256))")
+_ADDLIQETH_MID: constant(Bytes[4]) = method_id("_addLiquidityEthForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address,uint256)")
 ADDLIQ_MID: constant(Bytes[4]) = method_id("addLiquidityForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256))")
-INVEST_MID: constant(Bytes[4]) = method_id("investTokenForUniPair(uint256,address,uint256,address,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256))")
+_ADDLIQ_MID: constant(Bytes[4]) = method_id("_addLiquidityForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address)")
+INVEST_MID: constant(Bytes[4]) = method_id("investTokenForUniPair(uint256,address,uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256))")
+_INVEST_MID: constant(Bytes[4]) = method_id("_investTokenForUniPair(uint256,address,uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256),address,uint256)")
 REMOVELIQ_MID: constant(Bytes[4]) = method_id("removeLiquidityFromUniV3NFLP(uint256,(uint256,address,uint256))")
+_REMOVELIQ_MID: constant(Bytes[4]) = method_id("_removeLiquidityFromUniV3NFLP(uint256,(uint256,address,uint256))")
 REMOVELIQETH_MID: constant(Bytes[4]) = method_id("removeLiquidityEthFromUniV3NFLP(uint256,(uint256,address,uint256))")
-DIVEST_MID: constant(Bytes[4]) = method_id("divestUniV3NFLPToToken(uint256,address,address,(uint256,address,uint256),uint256)")
+_REMOVELIQETH_MID: constant(Bytes[4]) = method_id("_removeLiquidityEthFromUniV3NFLP(uint256,(uint256,address,uint256))")
+DIVEST_MID: constant(Bytes[4]) = method_id("divestUniV3NFLPToToken(uint256,address,(uint256,address,uint256),uint256)")
+_DIVEST_MID: constant(Bytes[4]) = method_id("_divestUniV3NFLPToToken(uint256,address,(uint256,address,uint256),uint256)")
 
 paused: public(bool)
 admin: public(address)
@@ -111,66 +114,8 @@ def __init__():
     self.feeAmount = 5 * 10 ** 15
 
 @internal
-def safeApprove(_token: address, _spender: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        concat(
-            APPROVE_MID,
-            convert(_spender, bytes32),
-            convert(_value, bytes32)
-        ),
-        max_outsize=32
-    )  # dev: failed approve
-    if len(_response) > 0:
-        assert convert(_response, bool), "Approve failed"  # dev: failed approve
-
-@internal
-def safeTransfer(_token: address, _to: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        concat(
-            TRANSFER_MID,
-            convert(_to, bytes32),
-            convert(_value, bytes32)
-        ),
-        max_outsize=32
-    )  # dev: failed transfer
-    if len(_response) > 0:
-        assert convert(_response, bool), "Transfer failed"  # dev: failed transfer
-
-@internal
-def safeTransferFrom(_token: address, _from: address, _to: address, _value: uint256):
-    _response: Bytes[32] = raw_call(
-        _token,
-        concat(
-            TRANSFERFROM_MID,
-            convert(_from, bytes32),
-            convert(_to, bytes32),
-            convert(_value, bytes32)
-        ),
-        max_outsize=32
-    )  # dev: failed transferFrom
-    if len(_response) > 0:
-        assert convert(_response, bool), "TransferFrom failed"  # dev: failed transferFrom
-
-@internal
-def createAndInitializePoolIfNecessary(token0: address, token1: address, feeLevel: uint256, sqrtPriceX96: uint256):
-    _response32: Bytes[32] = raw_call(
-        NONFUNGIBLEPOSITIONMANAGER,
-        concat(
-            CAIPIN_MID,
-            convert(token0, bytes32),
-            convert(token1, bytes32),
-            convert(feeLevel, bytes32),
-            convert(sqrtPriceX96, bytes32)
-        ),
-        max_outsize=32
-    )
-    assert convert(convert(_response32, bytes32), address) != ZERO_ADDRESS, "Create Or Init Pool failed"
-
-@internal
-@view
-def getUniV3Pool(token0: address, token1: address, feeLevel: uint256) -> address:
+@pure
+def getCurrentSqrtPriceX96(token0: address, token1: address, feeLevel: uint256) -> uint256:
     _response32: Bytes[32] = raw_call(
         UNISWAPV3FACTORY,
         concat(
@@ -183,10 +128,7 @@ def getUniV3Pool(token0: address, token1: address, feeLevel: uint256) -> address
         is_static_call=True
     )
     pool: address = convert(convert(_response32, bytes32), address)
-    return pool
-
-@internal
-def getCurrentSqrtPriceX96(pool: address) -> uint256:
+    assert pool != ZERO_ADDRESS
     _response224: Bytes[224] = raw_call(
         pool,
         SLOT0_MID,
@@ -194,22 +136,29 @@ def getCurrentSqrtPriceX96(pool: address) -> uint256:
         is_static_call=True
     )
     sqrtPriceX96: uint256 = convert(slice(_response224, 0, 32), uint256)
-    assert sqrtPriceX96 != 0, "Pool does not initialized"
+    assert sqrtPriceX96 != 0
     return sqrtPriceX96
 
 @internal
 def addLiquidity(_tokenId: uint256, sender: address, uniV3Params: MintParams, _sqrtPriceX96: uint256 = 0) -> (uint256, uint256, uint256):
-    self.safeApprove(uniV3Params.token0, NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount0Desired)
-    self.safeApprove(uniV3Params.token1, NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount1Desired)
+    ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount0Desired)
+    ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount1Desired)
     if _tokenId == 0:
         sqrtPriceX96: uint256 = _sqrtPriceX96
-        _response32: Bytes[32] = empty(Bytes[32])
         if sqrtPriceX96 == 0:
-            pool: address = self.getUniV3Pool(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
-            assert pool != ZERO_ADDRESS, "Pool does not exist"
-
-            sqrtPriceX96 = self.getCurrentSqrtPriceX96(pool)
-        self.createAndInitializePoolIfNecessary(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee, sqrtPriceX96)
+            sqrtPriceX96 = self.getCurrentSqrtPriceX96(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
+        _response32: Bytes[32] = raw_call(
+            NONFUNGIBLEPOSITIONMANAGER,
+            concat(
+                CAIPIN_MID,
+                convert(uniV3Params.token0, bytes32),
+                convert(uniV3Params.token1, bytes32),
+                convert(uniV3Params.fee, bytes32),
+                convert(sqrtPriceX96, bytes32)
+            ),
+            max_outsize=32
+        )
+        assert convert(convert(_response32, bytes32), address) != ZERO_ADDRESS
         _response128: Bytes[128] = raw_call(
             NONFUNGIBLEPOSITIONMANAGER,
             concat(
@@ -272,8 +221,10 @@ def removeLiquidity(_tokenId: uint256, _removeParams: RemoveParams, _recipient: 
     token1: address = convert(convert(slice(_response384, 96, 32), uint256), address)
     liquidity: uint256 = convert(slice(_response384, 224, 32), uint256)
     isBurn: bool = False
-    if liquidity == _removeParams.liquidity:
+    if liquidity <= _removeParams.liquidity:
         isBurn = True
+    else:
+        liquidity = _removeParams.liquidity
     _response64: Bytes[64] = raw_call(
         NONFUNGIBLEPOSITIONMANAGER,
         concat(
@@ -310,17 +261,18 @@ def removeLiquidity(_tokenId: uint256, _removeParams: RemoveParams, _recipient: 
 
     return (token0, token1, amount0, amount1)
 
-@internal
+@external
 def _addLiquidityEthForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sender: address, msg_value: uint256):
-    assert not self.paused, "Paused"
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256), "Unsorted tokens"
+    assert msg.sender == self
+    assert not self.paused
+    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
     if uniV3Params.token0 == WETH:
         if msg_value > uniV3Params.amount0Desired:
             send(msg_sender, msg_value - uniV3Params.amount0Desired)
         else:
-            assert msg_value == uniV3Params.amount0Desired, "Eth not enough"
+            assert msg_value == uniV3Params.amount0Desired
         WrappedEth(WETH).deposit(value=uniV3Params.amount0Desired)
-        self.safeTransferFrom(uniV3Params.token1, msg_sender, self, uniV3Params.amount1Desired)
+        ERC20(uniV3Params.token1).transferFrom(msg_sender, self, uniV3Params.amount1Desired)
         amount0: uint256 = 0
         amount1: uint256 = 0
         liquidity: uint256 = 0
@@ -330,18 +282,18 @@ def _addLiquidityEthForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sen
         if amount0 > 0:
             WrappedEth(WETH).withdraw(amount0)
             send(msg_sender, amount0)
-            self.safeApprove(uniV3Params.token0, NONFUNGIBLEPOSITIONMANAGER, 0)
+            ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
         if amount1 > 0:
-            self.safeTransfer(uniV3Params.token1, msg_sender, amount1)
-            self.safeApprove(uniV3Params.token1, NONFUNGIBLEPOSITIONMANAGER, 0)
+            ERC20(uniV3Params.token1).transfer(msg_sender, amount1)
+            ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
     else:
-        assert uniV3Params.token1 == WETH, "Not Eth Pair"
+        assert uniV3Params.token1 == WETH
         if msg_value > uniV3Params.amount1Desired:
             send(msg_sender, msg_value - uniV3Params.amount1Desired)
         else:
-            assert msg_value == uniV3Params.amount1Desired, "Eth not enough"
+            assert msg_value == uniV3Params.amount1Desired
         WrappedEth(WETH).deposit(value=uniV3Params.amount1Desired)
-        self.safeTransferFrom(uniV3Params.token0, msg_sender, self, uniV3Params.amount0Desired)
+        ERC20(uniV3Params.token0).transferFrom(msg_sender, self, uniV3Params.amount0Desired)
         amount0: uint256 = 0
         amount1: uint256 = 0
         liquidity: uint256 = 0
@@ -349,25 +301,20 @@ def _addLiquidityEthForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sen
         amount0 = uniV3Params.amount0Desired - amount0
         amount1 = uniV3Params.amount1Desired - amount1
         if amount0 > 0:
-            self.safeTransfer(uniV3Params.token0, msg_sender, amount0)
-            self.safeApprove(uniV3Params.token0, NONFUNGIBLEPOSITIONMANAGER, 0)
+            ERC20(uniV3Params.token0).transfer(msg_sender, amount0)
+            ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
         if amount1 > 0:
             WrappedEth(WETH).withdraw(amount1)
             send(msg_sender, amount1)
-            self.safeApprove(uniV3Params.token1, NONFUNGIBLEPOSITIONMANAGER, 0)
+            ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
 
 @external
-@payable
-@nonreentrant('lock')
-def addLiquidityEthForUniV3(_tokenId: uint256, uniV3Params: MintParams):
-    self._addLiquidityEthForUniV3(_tokenId, uniV3Params, msg.sender, msg.value)
-
-@internal
 def _addLiquidityForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sender: address):
-    assert not self.paused, "Paused"
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256), "Unsorted tokens"
-    self.safeTransferFrom(uniV3Params.token0, msg_sender, self, uniV3Params.amount0Desired)
-    self.safeTransferFrom(uniV3Params.token1, msg_sender, self, uniV3Params.amount1Desired)
+    assert msg.sender == self
+    assert not self.paused
+    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
+    ERC20(uniV3Params.token0).transferFrom(msg_sender, self, uniV3Params.amount0Desired)
+    ERC20(uniV3Params.token1).transferFrom(msg_sender, self, uniV3Params.amount1Desired)
     amount0: uint256 = 0
     amount1: uint256 = 0
     liquidity: uint256 = 0
@@ -375,32 +322,22 @@ def _addLiquidityForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sender
     amount0 = uniV3Params.amount0Desired - amount0
     amount1 = uniV3Params.amount1Desired - amount1
     if amount0 > 0:
-        self.safeTransfer(uniV3Params.token0, msg_sender, amount0)
-        self.safeApprove(uniV3Params.token0, NONFUNGIBLEPOSITIONMANAGER, 0)
+        ERC20(uniV3Params.token0).transfer(msg_sender, amount0)
+        ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
     if amount1 > 0:
-        self.safeTransfer(uniV3Params.token1, msg_sender, amount1)
-        self.safeApprove(uniV3Params.token1, NONFUNGIBLEPOSITIONMANAGER, 0)
+        ERC20(uniV3Params.token1).transfer(msg_sender, amount1)
+        ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
 
 @external
-@nonreentrant('lock')
-def addLiquidityForUniV3(_tokenId: uint256, uniV3Params: MintParams):
-    self._addLiquidityForUniV3(_tokenId, uniV3Params, msg.sender)
-
-@internal
-def _removeLiquidityFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams, msg_sender: address):
-    assert _tokenId != 0, "Wrong Token ID"
-    ERC721(NONFUNGIBLEPOSITIONMANAGER).transferFrom(msg_sender, self, _tokenId)
+def _removeLiquidityFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
+    assert msg.sender == self
+    assert _tokenId != 0
     self.removeLiquidity(_tokenId, _removeParams)
 
 @external
-@nonreentrant('lock')
-def removeLiquidityFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
-    self._removeLiquidityFromUniV3NFLP(_tokenId, _removeParams, msg.sender)
-
-@internal
-def _removeLiquidityEthFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams, msg_sender: address):
-    assert _tokenId != 0, "Wrong Token ID"
-    ERC721(NONFUNGIBLEPOSITIONMANAGER).transferFrom(msg_sender, self, _tokenId)
+def _removeLiquidityEthFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
+    assert msg.sender == self
+    assert _tokenId != 0
     token0: address = ZERO_ADDRESS
     token1: address = ZERO_ADDRESS
     amount0: uint256 = 0
@@ -409,24 +346,19 @@ def _removeLiquidityEthFromUniV3NFLP(_tokenId: uint256, _removeParams: RemovePar
     if token0 == WETH and token1 != WETH:
         WrappedEth(token0).withdraw(amount0)
         send(_removeParams.recipient, amount0)
-        self.safeTransfer(token1, _removeParams.recipient, amount1)
+        ERC20(token1).transfer(_removeParams.recipient, amount1)
     elif token1 == WETH and token0 != WETH:
         WrappedEth(token1).withdraw(amount1)
         send(_removeParams.recipient, amount1)
-        self.safeTransfer(token0, _removeParams.recipient, amount0)
+        ERC20(token0).transfer(_removeParams.recipient, amount0)
     else:
         raise "Not Eth Pair"
-
-@external
-@nonreentrant('lock')
-def removeLiquidityEthFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
-    self._removeLiquidityEthFromUniV3NFLP(_tokenId, _removeParams, msg.sender)
 
 @internal
 def token2Token(fromToken: address, toToken: address, tokens2Trade: uint256, deadline: uint256) -> uint256:
     if fromToken == toToken:
         return tokens2Trade
-    self.safeApprove(fromToken, UNISWAPV2ROUTER02, tokens2Trade)
+    ERC20(fromToken).approve(UNISWAPV2ROUTER02, tokens2Trade)
     _response: Bytes[128] = raw_call(
         UNISWAPV2ROUTER02,
         concat(
@@ -443,8 +375,8 @@ def token2Token(fromToken: address, toToken: address, tokens2Trade: uint256, dea
         max_outsize=128
     )
     tokenBought: uint256 = convert(slice(_response, 96, 32), uint256)
-    self.safeApprove(fromToken, UNISWAPV2ROUTER02, 0)
-    assert tokenBought > 0, "Error Swapping Token"
+    ERC20(fromToken).approve(UNISWAPV2ROUTER02, 0)
+    assert tokenBought > 0
     return tokenBought
 
 @internal
@@ -473,9 +405,6 @@ def uintSqrt(x: uint256) -> uint256:
     else:
         return 1
 
-# (X + fX') * (Y - Y') = X * Y
-# Y' / (X_toinvest - X') = p^2 = P
-# Quadratic equation solution for X'
 @internal
 @view
 def getUserInForSqrtPriceX96(reserveIn: uint256, reserveOut: uint256, priceX96: uint256, toInvest: uint256) -> uint256:
@@ -484,21 +413,12 @@ def getUserInForSqrtPriceX96(reserveIn: uint256, reserveOut: uint256, priceX96: 
 
 @internal
 @pure
-def _getPairTokens(pair: address) -> (address, address):
-    token0: address = UniswapV2Pair(pair).token0()
-    token1: address = UniswapV2Pair(pair).token1()
-    return (token0, token1)
-
-@internal
-@view
 def _getLiquidityInPool(midToken: address, pair: address) -> uint256:
     res0: uint256 = 0
     res1: uint256 = 0
-    token0: address = ZERO_ADDRESS
-    token1: address = ZERO_ADDRESS
     blockTimestampLast: uint256 = 0
     (res0, res1, blockTimestampLast) = UniswapV2Pair(pair).getReserves()
-    (token0, token1) = self._getPairTokens(pair)
+    token0: address = UniswapV2Pair(pair).token0()
     if token0 == midToken:
         return res0
     else:
@@ -507,6 +427,8 @@ def _getLiquidityInPool(midToken: address, pair: address) -> uint256:
 @internal
 @view
 def getMidToken(midToken: address, token0: address, token1: address) -> address:
+    if midToken == token0 or midToken == token1:
+        return midToken
     pair0: address = UniswapV2Factory(UNISWAPV2FACTORY).getPair(midToken, token0)
     pair1: address = UniswapV2Factory(UNISWAPV2FACTORY).getPair(midToken, token1)
     eth0: uint256 = self._getLiquidityInPool(midToken, pair0)
@@ -516,10 +438,11 @@ def getMidToken(midToken: address, token0: address, token1: address) -> address:
     else:
         return token1
 
-@internal
+@external
 def _investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, _uniV3Params: SingleMintParams, msg_sender: address, msg_value: uint256):
-    assert not self.paused, "Paused"
-    assert amount > 0, "Invalid input amount"
+    assert msg.sender == self
+    assert not self.paused
+    assert amount > 0
     uniV3Params: MintParams = MintParams({
         token0: _uniV3Params.token0,
         token1: _uniV3Params.token1,
@@ -533,22 +456,20 @@ def _investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, 
         recipient: _uniV3Params.recipient,
         deadline: _uniV3Params.deadline
     })
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256), "Unsorted tokens"
-
+    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
     token: address = _token
-    _response32: Bytes[32] = empty(Bytes[32])
     toInvest: uint256 = 0
     midToken: address = WETH
     if token == VETH or token == ZERO_ADDRESS:
         if msg_value > amount:
             send(msg_sender, msg_value - amount)
         else:
-            assert msg_value == amount, "Insufficient value"
+            assert msg_value == amount
         WrappedEth(WETH).deposit(value=amount)
         token = WETH
         toInvest = amount
     else:
-        self.safeTransferFrom(token, msg_sender, self, amount)
+        ERC20(token).transferFrom(msg_sender, self, amount)
         if msg_value > 0:
             send(msg_sender, msg_value)
         if token == WETH:
@@ -576,10 +497,8 @@ def _investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, 
         endToken = uniV3Params.token0
 
     sqrtPriceX96: uint256 = 0
-    pool: address = self.getUniV3Pool(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
-    assert pool != ZERO_ADDRESS, "Pool does not exist"
 
-    sqrtPriceX96 = self.getCurrentSqrtPriceX96(pool)
+    sqrtPriceX96 = self.getCurrentSqrtPriceX96(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
 
     retAmount: uint256 = 0
     swapAmount: uint256 = 0
@@ -613,27 +532,19 @@ def _investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, 
     amount1: uint256 = 0
     liquidity: uint256 = 0
     (amount0, amount1, liquidity) = self.addLiquidity(_tokenId, msg_sender, uniV3Params, sqrtPriceX96)
-    assert liquidity >= _uniV3Params.liquidityMin, "High Slippage"
+    assert liquidity >= _uniV3Params.liquidityMin
     amount0 = uniV3Params.amount0Desired - amount0
     amount1 = uniV3Params.amount1Desired - amount1
     if amount0 > 0:
-        self.safeApprove(uniV3Params.token0, NONFUNGIBLEPOSITIONMANAGER, 0)
+        ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
     if amount1 > 0:
-        self.safeApprove(uniV3Params.token1, NONFUNGIBLEPOSITIONMANAGER, 0)
+        ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
 
 @external
-@payable
-@nonreentrant('lock')
-def investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, midToken: address, _uniV3Params: SingleMintParams):
-    fee: uint256 = self.feeAmount
-    assert msg.value >= fee, "Insufficient fee"
-    send(self.feeAddress, fee)
-    self._investTokenForUniPair(_tokenId, _token, amount, _uniV3Params, msg.sender, msg.value - fee)
-
-@internal
-def _divestUniV3NFLPToToken(_tokenId: uint256, _token: address, midToken: address, _removeParams: RemoveParams, minTokenAmount: uint256, msg_sender: address):
+def _divestUniV3NFLPToToken(_tokenId: uint256, _token: address, _removeParams: RemoveParams, minTokenAmount: uint256):
+    assert msg.sender == self
     deadline: uint256 = MAX_UINT256
-    assert not self.paused, "Paused"
+    assert not self.paused
 
     token: address = _token
     if token == VETH or token == ZERO_ADDRESS:
@@ -647,10 +558,11 @@ def _divestUniV3NFLPToToken(_tokenId: uint256, _token: address, midToken: addres
 
     amount: uint256 = 0
     if token0 == token:
-        amount = self.token2Token(token1, token0, amount1, MAX_UINT256)
+        amount = self.token2Token(token1, token0, amount1, MAX_UINT256) + amount0
     elif token1 == token:
-        amount = self.token2Token(token0, token1, amount0, MAX_UINT256)
+        amount = self.token2Token(token0, token1, amount0, MAX_UINT256) + amount1
     else:
+        midToken: address = self.getMidToken(WETH, token0, token1)
         if midToken == token0:
             amount = self.token2Token(token1, token0, amount1, MAX_UINT256)
             amount = self.token2Token(token0, WETH, amount + amount0, MAX_UINT256)
@@ -660,210 +572,156 @@ def _divestUniV3NFLPToToken(_tokenId: uint256, _token: address, midToken: addres
             amount = self.token2Token(token1, WETH, amount + amount1, MAX_UINT256)
             amount = self.token2Token(WETH, token, amount, MAX_UINT256)
 
-    assert amount >= minTokenAmount, "High Slippage"
+    assert amount >= minTokenAmount
 
     if token != _token:
         WrappedEth(WETH).withdraw(amount)
-        send(msg_sender, amount)
+        send(_removeParams.recipient, amount)
     else:
-        self.safeTransfer(token, msg_sender, amount)
-
-@external
-@payable
-@nonreentrant('lock')
-def divestUniV3NFLPToToken(_tokenId: uint256, _token: address, midToken: address, _removeParams: RemoveParams, minTokenAmount: uint256):
-    fee: uint256 = self.feeAmount
-    msg_value: uint256 = msg.value
-    assert msg.value >= fee, "Insufficient fee"
-    if msg.value > fee:
-        send(msg.sender, msg.value - fee)
-    send(self.feeAddress, fee)
-    self._divestUniV3NFLPToToken(_tokenId, _token, midToken, _removeParams, minTokenAmount, msg.sender)
-
-# ADDLIQETH_MID
-# ADDLIQ_MID
-# INVEST_MID
-# REMOVELIQ_MID
-# REMOVELIQETH_MID
-# DIVEST_MID
+        ERC20(token).transfer(_removeParams.recipient, amount)
 
 @external
 @payable
 @nonreentrant('lock')
 def batchRun(data: Bytes[3616]):
     fee: uint256 = self.feeAmount
-    msg_value: uint256 = msg.value
-    assert msg.value >= fee, "Insufficient fee"
-    if msg.value > fee:
-        send(msg.sender, msg.value - fee)
+    assert msg.value >= fee
     send(self.feeAddress, fee)
     cursor: uint256 = 0
-    usedValue: uint256 = 0
+    usedValue: uint256 = fee
     for i in range(8):
+        if len(data) < cursor + 4:
+            break
         mid: Bytes[4] = slice(data, cursor, 4)
         cursor += 4
         if mid == ADDLIQ_MID:
-            self._addLiquidityForUniV3(convert(slice(data, cursor, 32), uint256), MintParams({
-                token0: convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                token1: convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                fee: convert(slice(data, cursor + 96, 32), uint256),
-                tickLower: convert(slice(data, cursor + 128, 32), int128),
-                tickUpper: convert(slice(data, cursor + 160, 32), int128),
-                amount0Desired: convert(slice(data, cursor + 192, 32), uint256),
-                amount1Desired: convert(slice(data, cursor + 224, 32), uint256),
-                amount0Min: convert(slice(data, cursor + 256, 32), uint256),
-                amount1Min: convert(slice(data, cursor + 288, 32), uint256),
-                recipient: convert(convert(slice(data, cursor + 320, 32), uint256), address),
-                deadline: convert(slice(data, cursor + 352, 32), uint256)
-            }), msg.sender)
+            raw_call(self,
+                concat(
+                    _ADDLIQ_MID,
+                    slice(data, cursor, 384),
+                    convert(msg.sender, bytes32)
+                )
+            )
             cursor += 384
         elif mid == ADDLIQETH_MID:
             if convert(convert(slice(data, cursor + 32, 32), uint256), address) == WETH:
-                self._addLiquidityEthForUniV3(convert(slice(data, cursor, 32), uint256), MintParams({
-                    token0: convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                    token1: convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                    fee: convert(slice(data, cursor + 96, 32), uint256),
-                    tickLower: convert(slice(data, cursor + 128, 32), int128),
-                    tickUpper: convert(slice(data, cursor + 160, 32), int128),
-                    amount0Desired: convert(slice(data, cursor + 192, 32), uint256),
-                    amount1Desired: convert(slice(data, cursor + 224, 32), uint256),
-                    amount0Min: convert(slice(data, cursor + 256, 32), uint256),
-                    amount1Min: convert(slice(data, cursor + 288, 32), uint256),
-                    recipient: convert(convert(slice(data, cursor + 320, 32), uint256), address),
-                    deadline: convert(slice(data, cursor + 352, 32), uint256)
-                }), msg.sender, convert(slice(data, cursor + 192, 32), uint256))
+                raw_call(self,
+                    concat(
+                        _ADDLIQETH_MID,
+                        slice(data, cursor, 384),
+                        convert(msg.sender, bytes32),
+                        slice(data, cursor + 192, 32)
+                    )
+                )
                 usedValue += convert(slice(data, cursor + 192, 32), uint256)
             else:
-                self._addLiquidityEthForUniV3(convert(slice(data, cursor, 32), uint256), MintParams({
-                    token0: convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                    token1: convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                    fee: convert(slice(data, cursor + 96, 32), uint256),
-                    tickLower: convert(slice(data, cursor + 128, 32), int128),
-                    tickUpper: convert(slice(data, cursor + 160, 32), int128),
-                    amount0Desired: convert(slice(data, cursor + 192, 32), uint256),
-                    amount1Desired: convert(slice(data, cursor + 224, 32), uint256),
-                    amount0Min: convert(slice(data, cursor + 256, 32), uint256),
-                    amount1Min: convert(slice(data, cursor + 288, 32), uint256),
-                    recipient: convert(convert(slice(data, cursor + 320, 32), uint256), address),
-                    deadline: convert(slice(data, cursor + 352, 32), uint256)
-                }), msg.sender, convert(slice(data, cursor + 224, 32), uint256))
+                assert convert(convert(slice(data, cursor + 64, 32), uint256), address) == WETH
+                raw_call(self,
+                    concat(
+                        _ADDLIQETH_MID,
+                        slice(data, cursor, 384),
+                        convert(msg.sender, bytes32),
+                        slice(data, cursor + 224, 32)
+                    )
+                )
                 usedValue += convert(slice(data, cursor + 224, 32), uint256)
             cursor += 384
         elif mid == REMOVELIQ_MID:
-            self._removeLiquidityFromUniV3NFLP(convert(slice(data, cursor, 32), uint256), RemoveParams({
-                liquidity: convert(slice(data, cursor + 32, 32), uint256),
-                recipient: convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                deadline: convert(slice(data, cursor + 96, 32), uint256)
-            }), msg.sender)
+            raw_call(self,
+                concat(
+                    _REMOVELIQ_MID,
+                    slice(data, cursor, 128)
+                )
+            )
             cursor += 128
         elif mid == REMOVELIQETH_MID:
-            self._removeLiquidityEthFromUniV3NFLP(convert(slice(data, cursor, 32), uint256), RemoveParams({
-                liquidity: convert(slice(data, cursor + 32, 32), uint256),
-                recipient: convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                deadline: convert(slice(data, cursor + 96, 32), uint256)
-            }), msg.sender)
+            raw_call(self,
+                concat(
+                    _REMOVELIQETH_MID,
+                    slice(data, cursor, 128)
+                )
+            )
             cursor += 128
         elif mid == INVEST_MID:
-            if convert(convert(slice(data, cursor + 32, 32), uint256), address) == VETH or convert(convert(slice(data, cursor + 32, 32), uint256), address) == ZERO_ADDRESS:
-                self._investTokenForUniPair(
-                    convert(slice(data, cursor, 32), uint256),
-                    convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                    convert(slice(data, cursor + 64, 32), uint256),
-                    SingleMintParams({
-                        token0: convert(convert(slice(data, cursor + 96, 32), uint256), address),
-                        token1: convert(convert(slice(data, cursor + 128, 32), uint256), address),
-                        fee: convert(slice(data, cursor + 160, 32), uint256),
-                        tickLower: convert(slice(data, cursor + 192, 32), int128),
-                        tickUpper: convert(slice(data, cursor + 224, 32), int128),
-                        sqrtPriceAX96: convert(slice(data, cursor + 256, 32), uint256),
-                        sqrtPriceBX96: convert(slice(data, cursor + 288, 32), uint256),
-                        liquidityMin: convert(slice(data, cursor + 320, 32), uint256),
-                        recipient: convert(convert(slice(data, cursor + 352, 32), uint256), address),
-                        deadline: convert(slice(data, cursor + 384, 32), uint256)
-                    }),
-                    msg.sender,
-                    convert(slice(data, cursor + 64, 32), uint256))
+            token: address = convert(convert(slice(data, cursor + 32, 32), uint256), address)
+            if token == VETH or token == ZERO_ADDRESS:
+                raw_call(self,
+                    concat(
+                        _INVEST_MID,
+                        slice(data, cursor, 416),
+                        convert(msg.sender, bytes32),
+                        slice(data, cursor + 64, 32)
+                    )
+                )
                 usedValue += convert(slice(data, cursor + 64, 32), uint256)
             else:
-                self._investTokenForUniPair(
-                    convert(slice(data, cursor, 32), uint256),
-                    convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                    convert(slice(data, cursor + 64, 32), uint256),
-                    SingleMintParams({
-                        token0: convert(convert(slice(data, cursor + 96, 32), uint256), address),
-                        token1: convert(convert(slice(data, cursor + 128, 32), uint256), address),
-                        fee: convert(slice(data, cursor + 160, 32), uint256),
-                        tickLower: convert(slice(data, cursor + 192, 32), int128),
-                        tickUpper: convert(slice(data, cursor + 224, 32), int128),
-                        sqrtPriceAX96: convert(slice(data, cursor + 256, 32), uint256),
-                        sqrtPriceBX96: convert(slice(data, cursor + 288, 32), uint256),
-                        liquidityMin: convert(slice(data, cursor + 320, 32), uint256),
-                        recipient: convert(convert(slice(data, cursor + 352, 32), uint256), address),
-                        deadline: convert(slice(data, cursor + 384, 32), uint256)
-                    }),
-                    msg.sender,
-                    0)
+                raw_call(self,
+                    concat(
+                        _INVEST_MID,
+                        slice(data, cursor, 416),
+                        convert(msg.sender, bytes32),
+                        convert(0, bytes32)
+                    )
+                )
             cursor += 416
-        else:
-            assert mid == DIVEST_MID, "Wrong Data"
-            self._divestUniV3NFLPToToken(convert(slice(data, cursor, 32), uint256),
-                convert(convert(slice(data, cursor + 32, 32), uint256), address),
-                convert(convert(slice(data, cursor + 64, 32), uint256), address),
-                RemoveParams({
-                    liquidity: convert(slice(data, cursor + 96, 32), uint256),
-                    recipient: convert(convert(slice(data, cursor + 128, 32), uint256), address),
-                    deadline: convert(slice(data, cursor + 160, 32), uint256)
-                }),
-                convert(slice(data, cursor + 192, 32), uint256),
-                msg.sender
+        elif mid == DIVEST_MID:
+            raw_call(self,
+                concat(
+                    _DIVEST_MID,
+                    slice(data, cursor, 192)
+                )
             )
-            cursor += 224
-    if msg.value - fee - usedValue > 0:
-        send(msg.sender, msg.value - fee - usedValue)
+            cursor += 192
+        else:
+            assert convert(mid, uint256) == 0
+            break
+
+    if msg.value - usedValue > 0:
+        send(msg.sender, msg.value - usedValue)
 
 # Admin functions
 @external
 def pause(_paused: bool):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     self.paused = _paused
     log Paused(_paused)
 
 @external
 def newAdmin(_admin: address):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     self.admin = _admin
 
 @external
 def newFeeAmount(_feeAmount: uint256):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     self.feeAmount = _feeAmount
     log FeeChanged(_feeAmount)
 
 @external
 def newFeeAddress(_feeAddress: address):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     self.feeAddress = _feeAddress
 
 @external
 @nonreentrant('lock')
 def batchWithdraw(token: address[8], amount: uint256[8], to: address[8]):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     for i in range(8):
         if token[i] == VETH:
             send(to[i], amount[i])
         elif token[i] != ZERO_ADDRESS:
-            self.safeTransfer(token[i], to[i], amount[i])
+            ERC20(token[i]).transfer(to[i], amount[i])
 
 @external
 @nonreentrant('lock')
 def withdraw(token: address, amount: uint256, to: address):
-    assert msg.sender == self.admin, "Not admin"
+    assert msg.sender == self.admin
     if token == VETH:
         send(to, amount)
     elif token != ZERO_ADDRESS:
-        self.safeTransfer(token, to, amount)
+        ERC20(token).transfer(to, amount)
 
 @external
 @payable
 def __default__():
-    assert msg.sender == WETH, "can't receive Eth"
+    assert msg.sender == WETH
