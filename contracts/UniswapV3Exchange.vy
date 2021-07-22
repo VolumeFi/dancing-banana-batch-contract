@@ -46,6 +46,7 @@ interface WrappedEth:
 
 interface NonfungiblePositionManager:
     def burn(tokenId: uint256): payable
+    def ownerOf(tokenId: uint256) -> address: view
 
 interface ERC20:
     def approve(account: address, amount: uint256): nonpayable
@@ -637,6 +638,7 @@ def batchRun(data: Bytes[3616]):
                 usedValue += convert(slice(data, cursor + 224, 32), uint256)
             cursor += 384
         elif mid == REMOVELIQ_MID:
+            assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
             raw_call(self,
                 concat(
                     _REMOVELIQ_MID,
@@ -645,6 +647,7 @@ def batchRun(data: Bytes[3616]):
             )
             cursor += 128
         elif mid == REMOVELIQETH_MID:
+            assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
             raw_call(self,
                 concat(
                     _REMOVELIQETH_MID,
@@ -675,6 +678,7 @@ def batchRun(data: Bytes[3616]):
                 )
             cursor += 416
         elif mid == DIVEST_MID:
+            assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
             raw_call(self,
                 concat(
                     _DIVEST_MID,
