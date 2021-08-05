@@ -60,6 +60,12 @@ interface UniswapV2Pair:
     def token0() -> address: view
     def getReserves() -> (uint256, uint256, uint256): view
 
+interface Distributor:
+    def distribute(addr: address): nonpayable
+
+interface NANAGauge:
+    def user_checkpoint(addr: address, action: uint256, token0: address, amount0: uint256, token1: address, amount1: uint256) -> uint256: nonpayable
+
 event AddedLiquidity:
     tokenId: indexed(uint256)
     token0: indexed(address)
@@ -100,18 +106,20 @@ COLLECT_MID: constant(Bytes[4]) = method_id("collect((uint256,address,uint128,ui
 SWAPETFT_MID: constant(Bytes[4]) = method_id("swapExactTokensForTokens(uint256,uint256,address[],address,uint256)")
 
 ADDLIQETH_MID: constant(Bytes[4]) = method_id("addLiquidityEthForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256))")
-_ADDLIQETH_MID: constant(Bytes[4]) = method_id("_addLiquidityEthForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address,uint256)")
+_ADDLIQETH_MID: constant(Bytes[4]) = method_id("addLiquidityEthForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address)")
 ADDLIQ_MID: constant(Bytes[4]) = method_id("addLiquidityForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256))")
-_ADDLIQ_MID: constant(Bytes[4]) = method_id("_addLiquidityForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address)")
+_ADDLIQ_MID: constant(Bytes[4]) = method_id("addLiquidityForUniV3(uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,uint256,address,uint256),address)")
 INVEST_MID: constant(Bytes[4]) = method_id("investTokenForUniPair(uint256,address,uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256))")
-_INVEST_MID: constant(Bytes[4]) = method_id("_investTokenForUniPair(uint256,address,uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256),address,uint256)")
+_INVEST_MID: constant(Bytes[4]) = method_id("investTokenForUniPair(uint256,address,uint256,(address,address,uint256,int128,int128,uint256,uint256,uint256,address,uint256),address)")
 REMOVELIQ_MID: constant(Bytes[4]) = method_id("removeLiquidityFromUniV3NFLP(uint256,(uint256,address,uint256))")
-_REMOVELIQ_MID: constant(Bytes[4]) = method_id("_removeLiquidityFromUniV3NFLP(uint256,(uint256,address,uint256))")
 REMOVELIQETH_MID: constant(Bytes[4]) = method_id("removeLiquidityEthFromUniV3NFLP(uint256,(uint256,address,uint256))")
-_REMOVELIQETH_MID: constant(Bytes[4]) = method_id("_removeLiquidityEthFromUniV3NFLP(uint256,(uint256,address,uint256))")
 DIVEST_MID: constant(Bytes[4]) = method_id("divestUniV3NFLPToToken(uint256,address,(uint256,address,uint256),uint256)")
-_DIVEST_MID: constant(Bytes[4]) = method_id("_divestUniV3NFLPToToken(uint256,address,(uint256,address,uint256),uint256)")
 
+USER_CHECKPOINT_MID: constant(Bytes[4]) = method_id("user_checkpoint(address,uint256,address,uint256,address,uint256)")
+
+baseContract: public(address)
+gauge: public(address)
+distributor: public(address)
 paused: public(bool)
 admin: public(address)
 feeAddress: public(address)
@@ -124,571 +132,183 @@ def __init__():
     self.feeAddress = 0xf29399fB3311082d9F8e62b988cBA44a5a98ebeD
     self.feeAmount = 5 * 10 ** 15
 
-@internal
-@pure
-def getCurrentSqrtPriceX96(token0: address, token1: address, feeLevel: uint256) -> uint256:
-    _response32: Bytes[32] = raw_call(
-        UNISWAPV3FACTORY,
-        concat(
-            GETPOOL_MID,
-            convert(token0, bytes32),
-            convert(token1, bytes32),
-            convert(feeLevel, bytes32)
-        ),
-        max_outsize=32,
-        is_static_call=True
-    )
-    pool: address = convert(convert(_response32, bytes32), address)
-    assert pool != ZERO_ADDRESS
-    _response224: Bytes[224] = raw_call(
-        pool,
-        SLOT0_MID,
-        max_outsize=224,
-        is_static_call=True
-    )
-    sqrtPriceX96: uint256 = convert(slice(_response224, 0, 32), uint256)
-    assert sqrtPriceX96 != 0
-    return sqrtPriceX96
-
-@internal
-def addLiquidity(_tokenId: uint256, sender: address, uniV3Params: MintParams, _sqrtPriceX96: uint256 = 0) -> (uint256, uint256, uint256):
-    ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount0Desired)
-    ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, uniV3Params.amount1Desired)
-    if _tokenId == 0:
-        sqrtPriceX96: uint256 = _sqrtPriceX96
-        if sqrtPriceX96 == 0:
-            sqrtPriceX96 = self.getCurrentSqrtPriceX96(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
-        _response32: Bytes[32] = raw_call(
-            NONFUNGIBLEPOSITIONMANAGER,
-            concat(
-                CAIPIN_MID,
-                convert(uniV3Params.token0, bytes32),
-                convert(uniV3Params.token1, bytes32),
-                convert(uniV3Params.fee, bytes32),
-                convert(sqrtPriceX96, bytes32)
-            ),
-            max_outsize=32
-        )
-        assert convert(convert(_response32, bytes32), address) != ZERO_ADDRESS
-        _response128: Bytes[128] = raw_call(
-            NONFUNGIBLEPOSITIONMANAGER,
-            concat(
-                MINT_MID,
-                convert(uniV3Params.token0, bytes32),
-                convert(uniV3Params.token1, bytes32),
-                convert(uniV3Params.fee, bytes32),
-                convert(uniV3Params.tickLower, bytes32),
-                convert(uniV3Params.tickUpper, bytes32),
-                convert(uniV3Params.amount0Desired, bytes32),
-                convert(uniV3Params.amount1Desired, bytes32),
-                convert(uniV3Params.amount0Min, bytes32),
-                convert(uniV3Params.amount1Min, bytes32),
-                convert(uniV3Params.recipient, bytes32),
-                convert(uniV3Params.deadline, bytes32)
-            ),
-            max_outsize=128
-        )
-        tokenId: uint256 = convert(slice(_response128, 0, 32), uint256)
-        liquidity: uint256 = convert(slice(_response128, 32, 32), uint256)
-        amount0: uint256 = convert(slice(_response128, 64, 32), uint256)
-        amount1: uint256 = convert(slice(_response128, 96, 32), uint256)
-        log AddedLiquidity(tokenId, uniV3Params.token0, uniV3Params.token1, liquidity, amount0, amount1)
-        return (amount0, amount1, liquidity)
-    else:
-        liquidity: uint256 = 0
-        amount0: uint256 = 0
-        amount1: uint256 = 0
-        _response96: Bytes[96] = raw_call(
-            NONFUNGIBLEPOSITIONMANAGER,
-            concat(
-                INCREASELIQUIDITY_MID,
-                convert(_tokenId, bytes32),
-                convert(uniV3Params.amount0Desired, bytes32),
-                convert(uniV3Params.amount1Desired, bytes32),
-                convert(uniV3Params.amount0Min, bytes32),
-                convert(uniV3Params.amount1Min, bytes32),
-                convert(uniV3Params.deadline, bytes32)
-            ),
-            max_outsize=96
-        )
-        liquidity = convert(slice(_response96, 0, 32), uint256)
-        amount0 = convert(slice(_response96, 32, 32), uint256)
-        amount1 = convert(slice(_response96, 64, 32), uint256)
-        log AddedLiquidity(_tokenId, uniV3Params.token0, uniV3Params.token1, liquidity, amount0, amount1)
-        return (amount0, amount1, liquidity)
-
-@internal
-def removeLiquidity(_tokenId: uint256, _removeParams: RemoveParams, _recipient: address=ZERO_ADDRESS) -> (address, address, uint256, uint256):
-    _response384: Bytes[384] = raw_call(
-        NONFUNGIBLEPOSITIONMANAGER,
-        concat(
-            POSITIONS_MID,
-            convert(_tokenId, bytes32)
-        ),
-        max_outsize=384,
-        is_static_call=True
-    )
-    token0: address = convert(convert(slice(_response384, 64, 32), uint256), address)
-    token1: address = convert(convert(slice(_response384, 96, 32), uint256), address)
-    liquidity: uint256 = convert(slice(_response384, 224, 32), uint256)
-    isBurn: bool = False
-    if liquidity <= _removeParams.liquidity:
-        isBurn = True
-    else:
-        liquidity = _removeParams.liquidity
-    _response64: Bytes[64] = raw_call(
-        NONFUNGIBLEPOSITIONMANAGER,
-        concat(
-            DECREASELIQUIDITY_MID,
-            convert(_tokenId, bytes32),
-            convert(liquidity, bytes32),
-            convert(0, bytes32),
-            convert(0, bytes32),
-            convert(_removeParams.deadline, bytes32)
-        ),
-        max_outsize=64
-    )
-    recipient: address = _recipient
-    if _recipient == ZERO_ADDRESS:
-        recipient = _removeParams.recipient
-
-    _response64 = raw_call(
-        NONFUNGIBLEPOSITIONMANAGER,
-        concat(
-            COLLECT_MID,
-            convert(_tokenId, bytes32),
-            convert(recipient, bytes32),
-            convert(2 ** 128 - 1, bytes32),
-            convert(2 ** 128 - 1, bytes32)
-        ),
-        max_outsize=64
-    )
-    amount0: uint256 = convert(slice(_response64, 0, 32), uint256)
-    amount1: uint256 = convert(slice(_response64, 32, 32), uint256)
-    if isBurn:
-        NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).burn(_tokenId)
-
-    log RemovedLiquidity(_tokenId, token0, token1, liquidity, amount0, amount1)
-
-    return (token0, token1, amount0, amount1)
-
-@external
-def _addLiquidityEthForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sender: address, msg_value: uint256):
-    assert msg.sender == self
-    assert not self.paused
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
-    if uniV3Params.token0 == WETH:
-        if msg_value > uniV3Params.amount0Desired:
-            send(msg_sender, msg_value - uniV3Params.amount0Desired)
-        else:
-            assert msg_value == uniV3Params.amount0Desired
-        WrappedEth(WETH).deposit(value=uniV3Params.amount0Desired)
-        ERC20(uniV3Params.token1).transferFrom(msg_sender, self, uniV3Params.amount1Desired)
-        amount0: uint256 = 0
-        amount1: uint256 = 0
-        liquidity: uint256 = 0
-        (amount0, amount1, liquidity) = self.addLiquidity(_tokenId, msg_sender, uniV3Params)
-        amount0 = uniV3Params.amount0Desired - amount0
-        amount1 = uniV3Params.amount1Desired - amount1
-        if amount0 > 0:
-            WrappedEth(WETH).withdraw(amount0)
-            send(msg_sender, amount0)
-            ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-        if amount1 > 0:
-            ERC20(uniV3Params.token1).transfer(msg_sender, amount1)
-            ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-    else:
-        assert uniV3Params.token1 == WETH
-        if msg_value > uniV3Params.amount1Desired:
-            send(msg_sender, msg_value - uniV3Params.amount1Desired)
-        else:
-            assert msg_value == uniV3Params.amount1Desired
-        WrappedEth(WETH).deposit(value=uniV3Params.amount1Desired)
-        ERC20(uniV3Params.token0).transferFrom(msg_sender, self, uniV3Params.amount0Desired)
-        amount0: uint256 = 0
-        amount1: uint256 = 0
-        liquidity: uint256 = 0
-        (amount0, amount1, liquidity) = self.addLiquidity(_tokenId, msg_sender, uniV3Params)
-        amount0 = uniV3Params.amount0Desired - amount0
-        amount1 = uniV3Params.amount1Desired - amount1
-        if amount0 > 0:
-            ERC20(uniV3Params.token0).transfer(msg_sender, amount0)
-            ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-        if amount1 > 0:
-            WrappedEth(WETH).withdraw(amount1)
-            send(msg_sender, amount1)
-            ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-
-@external
-def _addLiquidityForUniV3(_tokenId: uint256, uniV3Params: MintParams, msg_sender: address):
-    assert msg.sender == self
-    assert not self.paused
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
-    ERC20(uniV3Params.token0).transferFrom(msg_sender, self, uniV3Params.amount0Desired)
-    ERC20(uniV3Params.token1).transferFrom(msg_sender, self, uniV3Params.amount1Desired)
-    amount0: uint256 = 0
-    amount1: uint256 = 0
-    liquidity: uint256 = 0
-    (amount0, amount1, liquidity) = self.addLiquidity(_tokenId, msg_sender, uniV3Params)
-    amount0 = uniV3Params.amount0Desired - amount0
-    amount1 = uniV3Params.amount1Desired - amount1
-    if amount0 > 0:
-        ERC20(uniV3Params.token0).transfer(msg_sender, amount0)
-        ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-    if amount1 > 0:
-        ERC20(uniV3Params.token1).transfer(msg_sender, amount1)
-        ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-
-@external
-def _removeLiquidityFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
-    assert msg.sender == self
-    assert _tokenId != 0
-    self.removeLiquidity(_tokenId, _removeParams)
-
-@external
-def _removeLiquidityEthFromUniV3NFLP(_tokenId: uint256, _removeParams: RemoveParams):
-    assert msg.sender == self
-    assert _tokenId != 0
-    token0: address = ZERO_ADDRESS
-    token1: address = ZERO_ADDRESS
-    amount0: uint256 = 0
-    amount1: uint256 = 0
-    (token0, token1, amount0, amount1) = self.removeLiquidity(_tokenId, _removeParams, self)
-    if token0 == WETH and token1 != WETH:
-        WrappedEth(token0).withdraw(amount0)
-        send(_removeParams.recipient, amount0)
-        ERC20(token1).transfer(_removeParams.recipient, amount1)
-    elif token1 == WETH and token0 != WETH:
-        WrappedEth(token1).withdraw(amount1)
-        send(_removeParams.recipient, amount1)
-        ERC20(token0).transfer(_removeParams.recipient, amount0)
-    else:
-        raise "Not Eth Pair"
-
-@internal
-def token2Token(fromToken: address, toToken: address, tokens2Trade: uint256, deadline: uint256) -> uint256:
-    if fromToken == toToken:
-        return tokens2Trade
-    ERC20(fromToken).approve(UNISWAPV2ROUTER02, tokens2Trade)
-    _response: Bytes[128] = raw_call(
-        UNISWAPV2ROUTER02,
-        concat(
-            SWAPETFT_MID,
-            convert(tokens2Trade, bytes32),
-            convert(0, bytes32),
-            convert(160, bytes32),
-            convert(self, bytes32),
-            convert(deadline, bytes32),
-            convert(2, bytes32),
-            convert(fromToken, bytes32),
-            convert(toToken, bytes32)
-        ),
-        max_outsize=128
-    )
-    tokenBought: uint256 = convert(slice(_response, 96, 32), uint256)
-    ERC20(fromToken).approve(UNISWAPV2ROUTER02, 0)
-    assert tokenBought > 0
-    return tokenBought
-
-@internal
-@view
-def getVirtualPriceX96(sqrtPriceAX96: uint256, sqrtPriceX96: uint256, sqrtPriceBX96: uint256) -> uint256:
-    ret: uint256 = (sqrtPriceBX96 - sqrtPriceX96) * 2 ** 96 / sqrtPriceBX96 * 2 ** 96 / sqrtPriceX96 * 2 ** 96 / (sqrtPriceX96 - sqrtPriceAX96)
-    if ret > 2 ** 160:
-        return 2 ** 160
-    else:
-        return ret
-
-@internal
-@pure
-def uintSqrt(x: uint256) -> uint256:
-    if x > 3:
-        z: uint256 = (x + 1) / 2
-        y: uint256 = x
-        for i in range(256):
-            if y == z:
-                return y
-            y = z
-            z = (x / z + z) / 2
-        raise "Did not coverage"
-    elif x == 0:
-        return 0
-    else:
-        return 1
-
-@internal
-@view
-def getUserInForSqrtPriceX96(reserveIn: uint256, reserveOut: uint256, priceX96: uint256, toInvest: uint256) -> uint256:
-    b: uint256 = reserveIn + (reserveOut * 997 / 1000 * 2 ** 96 / priceX96) - toInvest * 997 / 1000
-    return (self.uintSqrt(b * b + 4 * reserveIn * toInvest * 997 / 1000) - b) * 1000 / 1994
-
-@internal
-@pure
-def _getLiquidityInPool(midToken: address, pair: address) -> uint256:
-    res0: uint256 = 0
-    res1: uint256 = 0
-    blockTimestampLast: uint256 = 0
-    (res0, res1, blockTimestampLast) = UniswapV2Pair(pair).getReserves()
-    token0: address = UniswapV2Pair(pair).token0()
-    if token0 == midToken:
-        return res0
-    else:
-        return res1
-
-@internal
-@view
-def getMidToken(midToken: address, token0: address, token1: address) -> address:
-    if midToken == token0 or midToken == token1:
-        return midToken
-    pair0: address = UniswapV2Factory(UNISWAPV2FACTORY).getPair(midToken, token0)
-    pair1: address = UniswapV2Factory(UNISWAPV2FACTORY).getPair(midToken, token1)
-    eth0: uint256 = self._getLiquidityInPool(midToken, pair0)
-    eth1: uint256 = self._getLiquidityInPool(midToken, pair1)
-    if eth0 > eth1:
-        return token0
-    else:
-        return token1
-
-@external
-def _investTokenForUniPair(_tokenId: uint256, _token: address, amount: uint256, _uniV3Params: SingleMintParams, msg_sender: address, msg_value: uint256):
-    assert msg.sender == self
-    assert not self.paused
-    assert amount > 0
-    uniV3Params: MintParams = MintParams({
-        token0: _uniV3Params.token0,
-        token1: _uniV3Params.token1,
-        fee: _uniV3Params.fee,
-        tickLower: _uniV3Params.tickLower,
-        tickUpper: _uniV3Params.tickUpper,
-        amount0Desired: 0,
-        amount1Desired: 0,
-        amount0Min: 0,
-        amount1Min: 0,
-        recipient: _uniV3Params.recipient,
-        deadline: _uniV3Params.deadline
-    })
-    assert convert(uniV3Params.token0, uint256) < convert(uniV3Params.token1, uint256)
-    token: address = _token
-    toInvest: uint256 = 0
-    midToken: address = WETH
-    if token == VETH or token == ZERO_ADDRESS:
-        if msg_value > amount:
-            send(msg_sender, msg_value - amount)
-        else:
-            assert msg_value == amount
-        WrappedEth(WETH).deposit(value=amount)
-        token = WETH
-        toInvest = amount
-    else:
-        ERC20(token).transferFrom(msg_sender, self, amount)
-        if msg_value > 0:
-            send(msg_sender, msg_value)
-        if token == WETH:
-            toInvest = amount
-        elif token != uniV3Params.token0 and token != uniV3Params.token1:
-            toInvest = self.token2Token(token, WETH, amount, uniV3Params.deadline)
-        else:
-            midToken = token
-            toInvest = amount
-
-    if uniV3Params.token0 != WETH and uniV3Params.token1 != WETH and token != uniV3Params.token0 and token != uniV3Params.token1:
-        midToken = self.getMidToken(WETH, uniV3Params.token0, uniV3Params.token1)
-        toInvest = self.token2Token(WETH, midToken, toInvest, uniV3Params.deadline)
-
-    res0: uint256 = 0
-    res1: uint256 = 0
-    blockTimestampLast: uint256 = 0
-    pair: address = UniswapV2Factory(UNISWAPV2FACTORY).getPair(uniV3Params.token0, uniV3Params.token1)
-    endToken: address = ZERO_ADDRESS
-    if midToken == uniV3Params.token0:
-        (res0, res1, blockTimestampLast) = UniswapV2Pair(pair).getReserves()
-        endToken = uniV3Params.token1
-    else:
-        (res1, res0, blockTimestampLast) = UniswapV2Pair(pair).getReserves()
-        endToken = uniV3Params.token0
-
-    sqrtPriceX96: uint256 = 0
-
-    sqrtPriceX96 = self.getCurrentSqrtPriceX96(uniV3Params.token0, uniV3Params.token1, uniV3Params.fee)
-
-    retAmount: uint256 = 0
-    swapAmount: uint256 = 0
-    if sqrtPriceX96 <= _uniV3Params.sqrtPriceAX96:
-        if convert(midToken, uint256) > convert(endToken, uint256):
-            swapAmount = toInvest
-    elif sqrtPriceX96 >= _uniV3Params.sqrtPriceBX96:
-        if convert(midToken, uint256) < convert(endToken, uint256):
-            swapAmount = toInvest
-    else:
-        virtualPriceX96: uint256 = self.getVirtualPriceX96(_uniV3Params.sqrtPriceAX96, sqrtPriceX96, _uniV3Params.sqrtPriceBX96)
-        if convert(midToken, uint256) > convert(endToken, uint256):
-            swapAmount = self.getUserInForSqrtPriceX96(res0, res1, virtualPriceX96, toInvest)
-        else:
-            swapAmount = self.getUserInForSqrtPriceX96(res0, res1, 2 ** 192 / virtualPriceX96, toInvest)
-
-    if swapAmount > toInvest:
-        swapAmount = toInvest
-
-    if swapAmount > 0:
-        retAmount = self.token2Token(midToken, endToken, swapAmount, uniV3Params.deadline)
-
-    if uniV3Params.token0 == midToken:
-        uniV3Params.amount0Desired = toInvest - swapAmount
-        uniV3Params.amount1Desired = retAmount
-    else:
-        uniV3Params.amount1Desired = toInvest - swapAmount
-        uniV3Params.amount0Desired = retAmount
-
-    amount0: uint256 = 0
-    amount1: uint256 = 0
-    liquidity: uint256 = 0
-    (amount0, amount1, liquidity) = self.addLiquidity(_tokenId, msg_sender, uniV3Params, sqrtPriceX96)
-    assert liquidity >= _uniV3Params.liquidityMin
-    amount0 = uniV3Params.amount0Desired - amount0
-    amount1 = uniV3Params.amount1Desired - amount1
-    if amount0 > 0:
-        ERC20(uniV3Params.token0).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-    if amount1 > 0:
-        ERC20(uniV3Params.token1).approve(NONFUNGIBLEPOSITIONMANAGER, 0)
-
-@external
-def _divestUniV3NFLPToToken(_tokenId: uint256, _token: address, _removeParams: RemoveParams, minTokenAmount: uint256):
-    assert msg.sender == self
-    deadline: uint256 = MAX_UINT256
-    assert not self.paused
-
-    token: address = _token
-    if token == VETH or token == ZERO_ADDRESS:
-        token = WETH
-
-    token0: address = ZERO_ADDRESS
-    token1: address = ZERO_ADDRESS
-    amount0: uint256 = 0
-    amount1: uint256 = 0
-    (token0, token1, amount0, amount1) = self.removeLiquidity(_tokenId, _removeParams, self)
-
-    amount: uint256 = 0
-    if token0 == token:
-        amount = self.token2Token(token1, token0, amount1, MAX_UINT256) + amount0
-    elif token1 == token:
-        amount = self.token2Token(token0, token1, amount0, MAX_UINT256) + amount1
-    else:
-        midToken: address = self.getMidToken(WETH, token0, token1)
-        if midToken == token0:
-            amount = self.token2Token(token1, token0, amount1, MAX_UINT256)
-            amount = self.token2Token(token0, WETH, amount + amount0, MAX_UINT256)
-            amount = self.token2Token(WETH, token, amount, MAX_UINT256)
-        else:
-            amount = self.token2Token(token0, token1, amount0, MAX_UINT256)
-            amount = self.token2Token(token1, WETH, amount + amount1, MAX_UINT256)
-            amount = self.token2Token(WETH, token, amount, MAX_UINT256)
-
-    assert amount >= minTokenAmount
-
-    if token != _token:
-        WrappedEth(WETH).withdraw(amount)
-        send(_removeParams.recipient, amount)
-    else:
-        ERC20(token).transfer(_removeParams.recipient, amount)
-
 @external
 @payable
 @nonreentrant('lock')
 def batchRun(data: Bytes[3616]):
+    assert self.paused == False
     fee: uint256 = self.feeAmount
     assert msg.value >= fee
     send(self.feeAddress, fee)
     cursor: uint256 = 0
     usedValue: uint256 = fee
+    _baseContract: address = self.baseContract
+    _gauge: address = self.gauge
     for i in range(8):
         if len(data) < cursor + 4:
             break
         mid: Bytes[4] = slice(data, cursor, 4)
         cursor += 4
         if mid == ADDLIQ_MID:
-            raw_call(self,
+            response128: Bytes[128] = raw_call(_baseContract,
                 concat(
                     _ADDLIQ_MID,
                     slice(data, cursor, 384),
                     convert(msg.sender, bytes32)
+                ),
+                max_outsize=128
+            )
+            raw_call(
+                _gauge,
+                concat(
+                    convert(msg.sender, bytes32),
+                    convert(1, bytes32),
+                    response128
                 )
             )
             cursor += 384
         elif mid == ADDLIQETH_MID:
             if convert(convert(slice(data, cursor + 32, 32), uint256), address) == WETH:
-                raw_call(self,
+                val: uint256 = convert(slice(data, cursor + 192, 32), uint256)
+                response128: Bytes[128] = raw_call(_baseContract,
                     concat(
                         _ADDLIQETH_MID,
                         slice(data, cursor, 384),
-                        convert(msg.sender, bytes32),
-                        slice(data, cursor + 192, 32)
-                    )
+                        convert(msg.sender, bytes32)
+                    ),
+                    value=val,
+                    max_outsize=128
                 )
-                usedValue += convert(slice(data, cursor + 192, 32), uint256)
+                raw_call(
+                    _gauge,
+                    concat(
+                        convert(msg.sender, bytes32),
+                        convert(1, bytes32),
+                        response128
+                    )
+                )                
+                usedValue += val
             else:
                 assert convert(convert(slice(data, cursor + 64, 32), uint256), address) == WETH
-                raw_call(self,
+                val: uint256 = convert(slice(data, cursor + 224, 32), uint256)
+                response128: Bytes[128] = raw_call(_baseContract,
                     concat(
                         _ADDLIQETH_MID,
                         slice(data, cursor, 384),
-                        convert(msg.sender, bytes32),
-                        slice(data, cursor + 224, 32)
-                    )
+                        convert(msg.sender, bytes32)
+                    ),
+                    value=val,
+                    max_outsize=128
                 )
-                usedValue += convert(slice(data, cursor + 224, 32), uint256)
+                raw_call(
+                    _gauge,
+                    concat(
+                        convert(msg.sender, bytes32),
+                        convert(1, bytes32),
+                        response128
+                    )
+                )                
+                usedValue += val
             cursor += 384
         elif mid == REMOVELIQ_MID:
             assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
-            raw_call(self,
+            response128: Bytes[128] = raw_call(_baseContract,
                 concat(
-                    _REMOVELIQ_MID,
+                    REMOVELIQ_MID,
                     slice(data, cursor, 128)
+                ),
+                max_outsize=128
+            )
+            raw_call(
+                _gauge,
+                concat(
+                    convert(msg.sender, bytes32),
+                    convert(2, bytes32),
+                    response128
                 )
             )
             cursor += 128
         elif mid == REMOVELIQETH_MID:
             assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
-            raw_call(self,
+            response128: Bytes[128] = raw_call(_baseContract,
                 concat(
-                    _REMOVELIQETH_MID,
+                    REMOVELIQETH_MID,
                     slice(data, cursor, 128)
+                ),
+                max_outsize=128
+            )
+            raw_call(
+                _gauge,
+                concat(
+                    convert(msg.sender, bytes32),
+                    convert(2, bytes32),
+                    response128
                 )
             )
             cursor += 128
         elif mid == INVEST_MID:
             token: address = convert(convert(slice(data, cursor + 32, 32), uint256), address)
             if token == VETH or token == ZERO_ADDRESS:
-                raw_call(self,
+                val: uint256 = convert(slice(data, cursor + 64, 32), uint256)
+                response128: Bytes[128] = raw_call(_baseContract,
                     concat(
                         _INVEST_MID,
                         slice(data, cursor, 416),
+                        convert(msg.sender, bytes32)
+                    ),
+                    value=val,
+                    max_outsize=128
+                )
+                raw_call(
+                    _gauge,
+                    concat(
                         convert(msg.sender, bytes32),
-                        slice(data, cursor + 64, 32)
+                        convert(2, bytes32),
+                        response128
                     )
                 )
-                usedValue += convert(slice(data, cursor + 64, 32), uint256)
+                usedValue += val
             else:
-                raw_call(self,
+                response128: Bytes[128] = raw_call(_baseContract,
                     concat(
                         _INVEST_MID,
                         slice(data, cursor, 416),
                         convert(msg.sender, bytes32),
                         convert(0, bytes32)
+                    ),
+                    max_outsize=128
+                )
+                raw_call(
+                    _gauge,
+                    concat(
+                        convert(msg.sender, bytes32),
+                        convert(2, bytes32),
+                        response128
                     )
                 )
             cursor += 416
         elif mid == DIVEST_MID:
             assert NonfungiblePositionManager(NONFUNGIBLEPOSITIONMANAGER).ownerOf(convert(slice(data, cursor, 32), uint256)) == msg.sender
-            raw_call(self,
+            response128: Bytes[128] = raw_call(_baseContract,
                 concat(
-                    _DIVEST_MID,
+                    DIVEST_MID,
                     slice(data, cursor, 192)
+                ),
+                max_outsize=128
+            )
+            raw_call(
+                _gauge,
+                concat(
+                    convert(msg.sender, bytes32),
+                    convert(2, bytes32),
+                    response128
                 )
             )
             cursor += 192
         else:
             assert convert(mid, uint256) == 0
             break
+    Distributor(self.distributor).distribute(msg.sender)
 
     if msg.value - usedValue > 0:
         send(msg.sender, msg.value - usedValue)
@@ -699,6 +319,16 @@ def pause(_paused: bool):
     assert msg.sender == self.admin
     self.paused = _paused
     log Paused(_paused)
+
+@external
+def newBaseContract(_baseContract: address):
+    assert msg.sender == self.admin
+    self.baseContract = _baseContract
+
+@external
+def newGauge(_gauge: address):
+    assert msg.sender == self.admin
+    self.gauge = _gauge
 
 @external
 def newAdmin(_admin: address):
